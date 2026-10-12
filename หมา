@@ -1,0 +1,688 @@
+if _G.IP_CLEAN then pcall(_G.IP_CLEAN) end
+print("[ไอโฟนโปร] เริ่มโหลด")
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local Lighting = game:GetService("Lighting")
+local VU = game:GetService("VirtualUser")
+local player = Players.LocalPlayer
+local cam = workspace.CurrentCamera
+local NAME = "ไอโฟนโปร"
+
+local C = {
+    bg = Color3.fromRGB(18, 18, 24),
+    row = Color3.fromRGB(30, 30, 42),
+    off = Color3.fromRGB(55, 55, 68),
+    accent = Color3.fromRGB(138, 43, 226),
+    text = Color3.fromRGB(225, 225, 235),
+    dim = Color3.fromRGB(150, 150, 165),
+}
+
+-- ค่าตั้งต้นของทุกฟีเจอร์
+local S = {
+    aim = false, auto = false, fovShow = false, wall = true, team = true,
+    fov = 150, smooth = 30, rate = 50, part = "ศีรษะ",
+    esp = false, box = false, names = false, hp = false, dist = false, bag = false, maxDist = 1000,
+    speed = false, speedVal = 50, ijump = false, noclip = false, bright = false,
+    onlySel = false,
+}
+local selected, currentTarget = nil, nil
+local alive = true
+local conns = {}
+local function bind(sig, fn)
+    local c = sig:Connect(fn)
+    table.insert(conns, c)
+    return c
+end
+
+local function getHum()
+    local c = player.Character
+    return c and c:FindFirstChildOfClass("Humanoid")
+end
+local function getHRP()
+    local c = player.Character
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+-- ล้างเมนูเก่า
+local function destroyOld()
+    local roots = {}
+    pcall(function() if gethui then table.insert(roots, gethui()) end end)
+    pcall(function() table.insert(roots, game:GetService("CoreGui")) end)
+    table.insert(roots, player:WaitForChild("PlayerGui"))
+    for _, r in ipairs(roots) do
+        pcall(function()
+            local o = r:FindFirstChild(NAME)
+            if o then o:Destroy() end
+        end)
+    end
+end
+destroyOld()
+
+-- กัน AFK
+bind(player.Idled, function()
+    pcall(function()
+        VU:CaptureController()
+        VU:ClickButton2(Vector2.new())
+    end)
+end)
+
+------------------------------------------------
+-- ESP
+------------------------------------------------
+local esp = {}
+local function clearEsp(p)
+    local o = esp[p]
+    if o then
+        pcall(function() o.hl:Destroy() end)
+        pcall(function() o.bb:Destroy() end)
+        esp[p] = nil
+    end
+end
+
+local function tl(parent, size, pos, ts)
+    local l = Instance.new("TextLabel")
+    l.BackgroundTransparency = 1
+    l.Size = size
+    l.Position = pos
+    l.Font = Enum.Font.SourceSansBold
+    l.TextSize = ts or 14
+    l.TextColor3 = Color3.new(1, 1, 1)
+    l.TextStrokeTransparency = 0
+    l.TextWrapped = true
+    l.Text = ""
+    l.Parent = parent
+    return l
+end
+
+local function buildEsp(p, char)
+    clearEsp(p)
+    local head = char:FindFirstChild("Head")
+    if not head then return end
+    local hl = Instance.new("Highlight")
+    hl.FillColor = C.accent
+    hl.OutlineColor = Color3.new(1, 1, 1)
+    hl.FillTransparency = 0.6
+    hl.Enabled = false
+    hl.Parent = char
+
+    local bb = Instance.new("BillboardGui")
+    bb.Size = UDim2.fromOffset(160, 64)
+    bb.StudsOffset = Vector3.new(0, 3, 0)
+    bb.AlwaysOnTop = true
+    bb.Adornee = head
+    bb.Enabled = false
+    bb.Parent = head
+
+    local o = { char = char, hl = hl, bb = bb }
+    o.name = tl(bb, UDim2.new(1, 0, 0, 16), UDim2.new(0, 0, 0, 0), 15)
+    o.hpBack = Instance.new("Frame")
+    o.hpBack.Size = UDim2.fromOffset(120, 6)
+    o.hpBack.Position = UDim2.new(0.5, -60, 0, 19)
+    o.hpBack.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    o.hpBack.BorderSizePixel = 0
+    o.hpBack.Parent = bb
+    o.hpFill = Instance.new("Frame")
+    o.hpFill.Size = UDim2.new(1, 0, 1, 0)
+    o.hpFill.BackgroundColor3 = Color3.fromRGB(60, 220, 90)
+    o.hpFill.BorderSizePixel = 0
+    o.hpFill.Parent = o.hpBack
+    o.dist = tl(bb, UDim2.new(1, 0, 0, 14), UDim2.new(0, 0, 0, 27), 13)
+    o.bag = tl(bb, UDim2.new(1, 0, 0, 22), UDim2.new(0, 0, 0, 41), 12)
+    esp[p] = o
+end
+
+local function bagText(p, char)
+    local t = {}
+    local tool = char:FindFirstChildOfClass("Tool")
+    if tool then table.insert(t, "[" .. tool.Name .. "]") end
+    local bp = p:FindFirstChild("Backpack")
+    if bp then
+        for _, v in ipairs(bp:GetChildren()) do
+            if v:IsA("Tool") then table.insert(t, v.Name) end
+        end
+    end
+    return table.concat(t, ", ")
+end
+
+local acc = 0
+bind(RunService.Heartbeat, function(dt)
+    -- วิ่งเร็ว
+    if S.speed then
+        local h = getHum()
+        if h then h.WalkSpeed = S.speedVal end
+    end
+    acc = acc + dt
+    if acc < 0.1 then return end
+    acc = 0
+    local me = getHRP()
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player then
+            local char = p.Character
+            if not char then
+                clearEsp(p)
+            else
+                local o = esp[p]
+                if not o or o.char ~= char or not o.hl.Parent then
+                    buildEsp(p, char)
+                    o = esp[p]
+                end
+                if o then
+                    local hum = char:FindFirstChildOfClass("Humanoid")
+                    local hrp = char:FindFirstChild("HumanoidRootPart")
+                    local d = (me and hrp) and (me.Position - hrp.Position).Magnitude or 0
+                    local show = S.esp and hum and hum.Health > 0 and d <= S.maxDist
+                    o.hl.Enabled = (show and S.box) and true or false
+                    o.bb.Enabled = (show and (S.names or S.hp or S.dist or S.bag)) and true or false
+                    if show then
+                        o.name.Visible = S.names
+                        o.name.Text = p.Name
+                        o.hpBack.Visible = S.hp
+                        local r = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
+                        o.hpFill.Size = UDim2.new(r, 0, 1, 0)
+                        o.hpFill.BackgroundColor3 = Color3.fromRGB(255, 60, 60):Lerp(Color3.fromRGB(60, 220, 90), r)
+                        o.dist.Visible = S.dist
+                        o.dist.Text = math.floor(d) .. " m"
+                        o.bag.Visible = S.bag
+                        o.bag.Text = S.bag and bagText(p, char) or ""
+                    end
+                end
+            end
+        end
+    end
+end)
+bind(Players.PlayerRemoving, function(p)
+    clearEsp(p)
+    if selected == p then selected = nil end
+end)
+
+------------------------------------------------
+-- ระบบเล็ง
+------------------------------------------------
+local function visible(part)
+    local origin = cam.CFrame.Position
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = { player.Character, part.Parent }
+    return workspace:Raycast(origin, part.Position - origin, params) == nil
+end
+
+local function getTarget()
+    cam = workspace.CurrentCamera
+    local center = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+    local best, bestD = nil, S.fov
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and p.Character then
+            local skip = false
+            if S.onlySel and selected and p ~= selected then skip = true end
+            if S.team and p.Team ~= nil and p.Team == player.Team then skip = true end
+            if not skip then
+                local hum = p.Character:FindFirstChildOfClass("Humanoid")
+                local part = p.Character:FindFirstChild(S.part == "ศีรษะ" and "Head" or "HumanoidRootPart")
+                if hum and part and hum.Health > 0 then
+                    local sp, on = cam:WorldToViewportPoint(part.Position)
+                    if on then
+                        local d = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+                        if d < bestD and (not S.wall or visible(part)) then
+                            best, bestD = part, d
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+
+local fovCircle
+bind(RunService.RenderStepped, function()
+    if fovCircle then
+        fovCircle.Visible = S.fovShow
+        fovCircle.Size = UDim2.fromOffset(S.fov * 2, S.fov * 2)
+    end
+    if S.aim or S.auto then
+        currentTarget = getTarget()
+        if S.aim and currentTarget then
+            cam = workspace.CurrentCamera
+            local goal = CFrame.lookAt(cam.CFrame.Position, currentTarget.Position)
+            cam.CFrame = cam.CFrame:Lerp(goal, 1 - S.smooth / 100)
+        end
+    else
+        currentTarget = nil
+    end
+end)
+
+-- ยิงอัตโนมัติ
+task.spawn(function()
+    while alive do
+        if S.auto and currentTarget then
+            pcall(function()
+                if mouse1click then
+                    mouse1click()
+                else
+                    VU:CaptureController()
+                    VU:ClickButton1(Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2))
+                end
+            end)
+        end
+        task.wait(math.max(S.rate, 10) / 1000)
+    end
+end)
+
+-- ฟีเจอร์ตัวละคร
+bind(RunService.Stepped, function()
+    if S.noclip and player.Character then
+        for _, p in ipairs(player.Character:GetDescendants()) do
+            if p:IsA("BasePart") then p.CanCollide = false end
+        end
+    end
+end)
+bind(UIS.JumpRequest, function()
+    if S.ijump then
+        local h = getHum()
+        if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
+    end
+end)
+local lightBackup
+local function fullbright(on)
+    if on then
+        lightBackup = {
+            Brightness = Lighting.Brightness, ClockTime = Lighting.ClockTime,
+            FogEnd = Lighting.FogEnd, GlobalShadows = Lighting.GlobalShadows, Ambient = Lighting.Ambient,
+        }
+        Lighting.Brightness = 2
+        Lighting.ClockTime = 14
+        Lighting.FogEnd = 1e6
+        Lighting.GlobalShadows = false
+        Lighting.Ambient = Color3.new(1, 1, 1)
+    elseif lightBackup then
+        for k, v in pairs(lightBackup) do Lighting[k] = v end
+    end
+end
+
+------------------------------------------------
+-- UI
+------------------------------------------------
+local function corner(o, r)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, r or 10)
+    c.Parent = o
+end
+local function mkLabel(parent, text, size, pos, align, color, font, ts)
+    local l = Instance.new("TextLabel")
+    l.BackgroundTransparency = 1
+    l.Size = size
+    l.Position = pos or UDim2.new()
+    l.Text = text
+    l.Font = font or Enum.Font.SourceSans
+    l.TextSize = ts or 18
+    l.TextColor3 = color or C.text
+    l.TextXAlignment = align or Enum.TextXAlignment.Left
+    l.Parent = parent
+    return l
+end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = NAME
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+do
+    local ok = pcall(function()
+        gui.Parent = (gethui and gethui()) or game:GetService("CoreGui")
+    end)
+    if not ok or not gui.Parent then gui.Parent = player:WaitForChild("PlayerGui") end
+end
+print("[ไอโฟนโปร] สร้างเมนูที่:", gui.Parent:GetFullName())
+
+-- วงกลม FOV
+fovCircle = Instance.new("Frame")
+fovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+fovCircle.Position = UDim2.new(0.5, 0, 0.5, 0)
+fovCircle.BackgroundTransparency = 1
+fovCircle.Visible = false
+fovCircle.Parent = gui
+corner(fovCircle, 9999)
+do
+    local st = Instance.new("UIStroke")
+    st.Color = C.accent
+    st.Thickness = 2
+    st.Parent = fovCircle
+end
+
+local win = Instance.new("Frame")
+win.Size = UDim2.fromOffset(540, 320)
+win.Position = UDim2.new(0.5, -270, 0.5, -160)
+win.BackgroundColor3 = C.bg
+win.BorderSizePixel = 0
+win.Parent = gui
+corner(win, 16)
+
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 44)
+titleBar.BackgroundTransparency = 1
+titleBar.Parent = win
+mkLabel(titleBar, NAME, UDim2.new(1, -70, 1, 0), UDim2.new(0, 18, 0, 0), nil, nil, Enum.Font.SourceSansBold, 22)
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.fromOffset(32, 32)
+closeBtn.Position = UDim2.new(1, -42, 0, 6)
+closeBtn.Text = "–"
+closeBtn.Font = Enum.Font.SourceSansBold
+closeBtn.TextSize = 22
+closeBtn.TextColor3 = C.text
+closeBtn.BackgroundColor3 = C.row
+closeBtn.Parent = titleBar
+corner(closeBtn, 16)
+
+-- ปุ่มลอยเปิดเมนู
+local openBtn = Instance.new("TextButton")
+openBtn.Size = UDim2.fromOffset(46, 46)
+openBtn.Position = UDim2.new(0, 12, 0.45, 0)
+openBtn.Text = "iP"
+openBtn.Font = Enum.Font.SourceSansBold
+openBtn.TextSize = 20
+openBtn.TextColor3 = Color3.new(1, 1, 1)
+openBtn.BackgroundColor3 = C.accent
+openBtn.Parent = gui
+corner(openBtn, 23)
+openBtn.MouseButton1Click:Connect(function() win.Visible = not win.Visible end)
+closeBtn.MouseButton1Click:Connect(function() win.Visible = false end)
+
+-- ลากเมนู
+do
+    local dragging, dragStart, startPos
+    titleBar.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging, dragStart, startPos = true, i.Position, win.Position
+        end
+    end)
+    bind(UIS.InputChanged, function(i)
+        if dragging and (i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseMovement) then
+            local d = i.Position - dragStart
+            win.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end)
+    bind(UIS.InputEnded, function(i)
+        if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+end
+
+-- แท็บ
+local side = Instance.new("Frame")
+side.Size = UDim2.new(0, 140, 1, -54)
+side.Position = UDim2.new(0, 8, 0, 48)
+side.BackgroundTransparency = 1
+side.Parent = win
+do
+    local l = Instance.new("UIListLayout")
+    l.Padding = UDim.new(0, 8)
+    l.SortOrder = Enum.SortOrder.LayoutOrder
+    l.Parent = side
+end
+
+local content = Instance.new("Frame")
+content.Size = UDim2.new(1, -164, 1, -54)
+content.Position = UDim2.new(0, 156, 0, 48)
+content.BackgroundTransparency = 1
+content.Parent = win
+
+local tabNames = { "ระบบเล็งยิง", "มองทะลุ", "ตัวละคร", "เลือกเป้าหมาย" }
+local pages, tabBtns, ord = {}, {}, {}
+
+local function selectTab(n)
+    for k, pg in pairs(pages) do pg.Visible = (k == n) end
+    for k, b in pairs(tabBtns) do
+        b.BackgroundColor3 = (k == n) and C.accent or C.row
+        b.TextColor3 = (k == n) and Color3.new(1, 1, 1) or C.dim
+    end
+end
+
+for i, n in ipairs(tabNames) do
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, 0, 0, 42)
+    b.LayoutOrder = i
+    b.Text = n
+    b.Font = Enum.Font.SourceSansBold
+    b.TextSize = 17
+    b.BorderSizePixel = 0
+    b.BackgroundColor3 = C.row
+    b.TextColor3 = C.dim
+    b.Parent = side
+    corner(b, 10)
+    tabBtns[n] = b
+
+    local pg = Instance.new("ScrollingFrame")
+    pg.Size = UDim2.new(1, 0, 1, 0)
+    pg.BackgroundTransparency = 1
+    pg.BorderSizePixel = 0
+    pg.ScrollBarThickness = 3
+    pg.CanvasSize = UDim2.new()
+    pg.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    pg.Visible = false
+    pg.Parent = content
+    local l = Instance.new("UIListLayout")
+    l.Padding = UDim.new(0, 8)
+    l.SortOrder = Enum.SortOrder.LayoutOrder
+    l.Parent = pg
+    pages[n] = pg
+    b.MouseButton1Click:Connect(function() selectTab(n) end)
+end
+
+local function row(page, h)
+    ord[page] = (ord[page] or 0) + 1
+    local r = Instance.new("Frame")
+    r.Size = UDim2.new(1, -8, 0, h or 44)
+    r.BackgroundColor3 = C.row
+    r.BorderSizePixel = 0
+    r.LayoutOrder = ord[page]
+    r.Parent = page
+    corner(r, 10)
+    return r
+end
+
+local function addToggle(page, text, key, cb)
+    local r = row(page, 44)
+    mkLabel(r, text, UDim2.new(1, -80, 1, 0), UDim2.new(0, 12, 0, 0))
+    local sw = Instance.new("TextButton")
+    sw.Size = UDim2.fromOffset(46, 26)
+    sw.Position = UDim2.new(1, -58, 0.5, -13)
+    sw.Text = ""
+    sw.AutoButtonColor = false
+    sw.BorderSizePixel = 0
+    sw.Parent = r
+    corner(sw, 13)
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.fromOffset(22, 22)
+    knob.BackgroundColor3 = Color3.new(1, 1, 1)
+    knob.BorderSizePixel = 0
+    knob.Parent = sw
+    corner(knob, 11)
+    local function paint()
+        sw.BackgroundColor3 = S[key] and C.accent or C.off
+        knob.Position = UDim2.new(0, S[key] and 22 or 2, 0, 2)
+    end
+    sw.MouseButton1Click:Connect(function()
+        S[key] = not S[key]
+        paint()
+        if cb then
+            local ok, err = pcall(cb, S[key])
+            if not ok then warn("[" .. NAME .. "] " .. text .. ": " .. tostring(err)) end
+        end
+    end)
+    paint()
+end
+
+local function addSlider(page, text, key, min, max)
+    local r = row(page, 62)
+    mkLabel(r, text, UDim2.new(1, -90, 0, 28), UDim2.new(0, 12, 0, 4))
+    local val = mkLabel(r, tostring(S[key]), UDim2.new(0, 70, 0, 28), UDim2.new(1, -82, 0, 4), Enum.TextXAlignment.Right, C.dim)
+    local bar = Instance.new("Frame")
+    bar.Size = UDim2.new(1, -28, 0, 8)
+    bar.Position = UDim2.new(0, 14, 0, 40)
+    bar.BackgroundColor3 = C.off
+    bar.BorderSizePixel = 0
+    bar.Parent = r
+    corner(bar, 4)
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new((S[key] - min) / (max - min), 0, 1, 0)
+    fill.BackgroundColor3 = C.accent
+    fill.BorderSizePixel = 0
+    fill.Parent = bar
+    corner(fill, 4)
+    local hit = Instance.new("TextButton")
+    hit.Size = UDim2.new(1, 0, 0, 30)
+    hit.Position = UDim2.new(0, 0, 1, -32)
+    hit.BackgroundTransparency = 1
+    hit.Text = ""
+    hit.Parent = r
+    local dragging = false
+    local function setX(x)
+        local a = math.clamp((x - bar.AbsolutePosition.X) / math.max(bar.AbsoluteSize.X, 1), 0, 1)
+        local v = math.floor(min + (max - min) * a + 0.5)
+        S[key] = v
+        fill.Size = UDim2.new(a, 0, 1, 0)
+        val.Text = tostring(v)
+    end
+    hit.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            setX(i.Position.X)
+        end
+    end)
+    bind(UIS.InputChanged, function(i)
+        if dragging and (i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseMovement) then
+            setX(i.Position.X)
+        end
+    end)
+    bind(UIS.InputEnded, function(i)
+        if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+end
+
+local function addCycle(page, text, key, options)
+    local r = row(page, 44)
+    mkLabel(r, text, UDim2.new(0.55, 0, 1, 0), UDim2.new(0, 12, 0, 0))
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.fromOffset(110, 30)
+    b.Position = UDim2.new(1, -122, 0.5, -15)
+    b.BackgroundColor3 = C.off
+    b.TextColor3 = Color3.new(1, 1, 1)
+    b.Font = Enum.Font.SourceSansBold
+    b.TextSize = 16
+    b.Text = S[key] .. " ▾"
+    b.BorderSizePixel = 0
+    b.Parent = r
+    corner(b, 8)
+    b.MouseButton1Click:Connect(function()
+        local idx = 1
+        for i, o in ipairs(options) do if o == S[key] then idx = i end end
+        S[key] = options[idx % #options + 1]
+        b.Text = S[key] .. " ▾"
+    end)
+end
+
+-- หน้า: ระบบเล็งยิง
+local pA = pages["ระบบเล็งยิง"]
+addToggle(pA, "เปิดใช้งานเล็งอัตโนมัติ", "aim")
+addToggle(pA, "ยิงอัตโนมัติ", "auto")
+addToggle(pA, "แสดงวงกลม FOV", "fovShow")
+addToggle(pA, "เช็กกำแพง (Wall Check)", "wall")
+addToggle(pA, "เช็กทีม (Team Check)", "team")
+addSlider(pA, "ขนาดระยะ FOV", "fov", 30, 400)
+addSlider(pA, "ความนุ่มนวลของการเล็ง", "smooth", 0, 90)
+addSlider(pA, "ความเร็วยิงออโต้ (ms)", "rate", 10, 500)
+addCycle(pA, "ตำแหน่งเป้าหมาย", "part", { "ศีรษะ", "ลำตัว" })
+
+-- หน้า: มองทะลุ
+local pE = pages["มองทะลุ"]
+addToggle(pE, "เปิดใช้งาน ESP", "esp")
+addToggle(pE, "กรอบตัวละคร", "box")
+addToggle(pE, "แสดงชื่อผู้เล่น", "names")
+addToggle(pE, "หลอดเลือด", "hp")
+addToggle(pE, "แสดงระยะห่าง", "dist")
+addToggle(pE, "มองกระเป๋า", "bag")
+addSlider(pE, "ระยะมองเห็นสูงสุด", "maxDist", 100, 3000)
+
+-- หน้า: ตัวละคร
+local pC = pages["ตัวละคร"]
+addToggle(pC, "วิ่งเร็ว", "speed", function(on)
+    if not on then
+        local h = getHum()
+        if h then h.WalkSpeed = 16 end
+    end
+end)
+addSlider(pC, "ความเร็ววิ่ง", "speedVal", 16, 150)
+addToggle(pC, "กระโดดไม่จำกัด", "ijump")
+addToggle(pC, "ทะลุกำแพง", "noclip")
+addToggle(pC, "มองเห็นชัด", "bright", fullbright)
+
+-- หน้า: เลือกเป้าหมาย
+local pT = pages["เลือกเป้าหมาย"]
+addToggle(pT, "ล็อกเฉพาะคนที่เลือก", "onlySel")
+local selRow = row(pT, 40)
+local selLbl = mkLabel(selRow, "เป้าหมาย: ยังไม่เลือก", UDim2.new(1, -20, 1, 0), UDim2.new(0, 12, 0, 0), nil, C.accent, Enum.Font.SourceSansBold)
+
+local function refreshList()
+    for _, c in ipairs(pT:GetChildren()) do
+        if c.Name:sub(1, 2) == "P_" then c:Destroy() end
+    end
+    local order = 100
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player then
+            local r = row(pT, 40)
+            r.Name = "P_" .. p.Name
+            r.LayoutOrder = order
+            order = order + 1
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.new(1, 0, 1, 0)
+            b.BackgroundTransparency = 1
+            b.Text = p.DisplayName .. "  (@" .. p.Name .. ")"
+            b.Font = Enum.Font.SourceSans
+            b.TextSize = 17
+            b.TextColor3 = C.text
+            b.Parent = r
+            b.MouseButton1Click:Connect(function()
+                selected = p
+                selLbl.Text = "เป้าหมาย: " .. p.Name
+            end)
+        end
+    end
+end
+do
+    local r = row(pT, 40)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, 0, 1, 0)
+    b.BackgroundTransparency = 1
+    b.Text = "รีเฟรชรายชื่อผู้เล่น"
+    b.Font = Enum.Font.SourceSansBold
+    b.TextSize = 17
+    b.TextColor3 = C.text
+    b.Parent = r
+    b.MouseButton1Click:Connect(refreshList)
+end
+bind(Players.PlayerAdded, refreshList)
+bind(Players.PlayerRemoving, function() task.defer(refreshList) end)
+refreshList()
+
+selectTab("ระบบเล็งยิง")
+
+-- ล้างตัวเองเมื่อรันซ้ำ
+_G.IP_CLEAN = function()
+    alive = false
+    for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+    for p in pairs(esp) do clearEsp(p) end
+    pcall(function() gui:Destroy() end)
+end
+
+print("[ไอโฟนโปร] โหลดสำเร็จ")
+pcall(function()
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = NAME, Text = "โหลดเสร็จแล้ว", Duration = 5
+    })
+end)
